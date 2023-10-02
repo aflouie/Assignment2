@@ -1,28 +1,251 @@
 ---
-title: ""
-author: ""
+title: "Assignment 2"
+author: "Allison Louie"
 format:
   html:
     embed-resources: true
+editor: visual
+fig.width: 5
+fig.height: 3
+theme: cerulean
 ---
 
-## Quarto
-
-Quarto enables you to weave together content and executable code into a finished document. To learn more about Quarto see <https://quarto.org>.
-
-## Running Code
-
-When you click the **Render** button a document will be generated that includes both content and the output of embedded code. You can embed code like this:
-
 ```{r}
-1 + 1
+library(dplyr)
+library(tidyverse)
+library(tidyr)
+library(ggplot2)
+library(leaflet)
+library(leaflet.providers)
+library(R.utils)
 ```
 
-You can add options to executable code like this
+## **Data Wrangling**
+
+### 1. After merging the data, make sure you don't have any duplicates by counting the number of rows.
 
 ```{r}
-#| echo: false
-2 * 2
+chs_individ <- read.csv("chs_individual.csv") 
+chs_region <- read.csv("chs_regional.csv")
+chs_comb <- merge(chs_individ, chs_region, by.x = "townname", by.y = "townname")
+
+dim(chs_comb)
+
+chs_comb <- chs_comb %>%
+  mutate(male = ifelse(is.na(male), mean(male, na.rm = TRUE), male),
+         hispanic = ifelse(is.na(hispanic), mean(hispanic, na.rm = TRUE), hispanic))
 ```
 
-The `echo: false` option disables the printing of code (only output is displayed).
+### 2. Create a new categorical variable named "obesity_level" using the BMI measurement (underweight BMI\<14; normal BMI 14-22; overweight BMI 22-24; obese BMI\>24)
+
+```{r}
+categories <- c("Underweight", "Normal", "Overweight", "Obese")
+chs_comb <- chs_comb[!is.na(chs_comb$bmi), ]
+chs_comb$obesity_level <- cut(chs_comb$bmi,
+                                        breaks = c(-Inf, 14, 22, 24, Inf),
+                                        labels = categories)
+summary_obesity <- chs_comb %>%
+  group_by(obesity_level) %>%
+  summarize(min_BMI = min(bmi),
+            max_BMI = max(bmi),
+            total_observations = n())
+summary_obesity
+```
+
+### 3. Create another categorical variable named "smoke_gas_exposure" that summarizes "Second Hand Smoke" and "Gas Stove." The variable should have four categories in total.
+
+```{r}
+chs_comb <- chs_comb %>%
+  mutate(smoke_gas_exposure = case_when(
+    smoke == 1 & gasstove == 1 ~ "Both",
+    smoke == 1 ~ "Second Hand Smoke",
+    gasstove == 1 ~ "Gas Stove",
+    TRUE ~ "None"
+  ))
+unique(chs_comb$smoke_gas_exposure)
+```
+
+### 4. Create four summary tables showing the average (or proportion, if binary) and sd of "Forced expiratory volume in 1 second (ml)" and asthma indicator by town, sex, obesity level, and "smoke_gas_exposure."
+
+```{r}
+summary_town <- chs_comb %>%
+  filter(!is.na(asthma)) %>%
+  group_by(townname) %>%
+  summarize(avg_fev = mean(fev, na.rm = TRUE),
+            sd_fev = sd(fev, na.rm = TRUE),
+            avg_asthma = mean(asthma))
+summary_town
+
+summary_male <- chs_comb %>%
+  filter(!is.na(asthma)) %>%
+  group_by(male) %>%
+  summarize(avg_fev = mean(fev, na.rm = TRUE),
+            sd_fev = sd(fev, na.rm = TRUE),
+            avg_asthma = mean(asthma))
+summary_male
+
+summary_obesity <- chs_comb %>%
+  filter(!is.na(asthma)) %>%
+  group_by(obesity_level) %>%
+  summarize(avg_fev = mean(fev, na.rm = TRUE),
+            sd_fev = sd(fev, na.rm = TRUE),
+            avg_asthma = mean(asthma))
+summary_obesity
+
+summary_smoke_gas <- chs_comb %>%
+  filter(!is.na(asthma)) %>%
+  group_by(smoke_gas_exposure) %>%
+  summarize(avg_fev = mean(fev, na.rm = TRUE),
+            sd_fev = sd(fev, na.rm = TRUE),
+            avg_asthma = mean(asthma))
+summary_smoke_gas
+```
+
+## **Looking at the Data (EDA)**
+
+```{r}
+dim(chs_comb)
+head(chs_comb)
+tail(chs_comb)
+names(chs_comb)
+str(chs_comb)
+summary(chs_comb)
+```
+
+### 1. What is the association between BMI and FEV (forced expiratory volume)?
+
+```{r}
+fev_bmi_summary <- chs_comb %>%
+  group_by(obesity_level) %>%
+  summarize(mean_fev = mean(fev, na.rm = TRUE))
+fev_bmi_summary
+
+chs_comb <- chs_comb[!is.na(chs_comb$fev) & is.finite(chs_comb$fev), ]
+ggplot(chs_comb, aes(x = bmi, y = fev)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(title = "Scatterplot of BMI vs. FEV",
+       x = "BMI",
+       y = "FEV")
+```
+
+It seems that for the towns, BMI and FEV have an overall positive relationship with each other when looking at the regression model. When looking at the obesity levels, the mean appears to be increasing throughout the different levels from "Underweight" to "Obese."
+
+### 2. What is the association between smoke and gas exposure and FEV?
+
+```{r}
+fev_gas_summary <- chs_comb %>%
+  group_by(smoke_gas_exposure) %>%
+  summarize(mean_fev = mean(fev, na.rm = TRUE))
+fev_gas_summary
+```
+
+The association between FEV and smoke and gas exposure appears to be relatively even throughout the different levels. There seems to be not much of a wide variance between the different categories of smoke and gas exposure.
+
+### 3. What is the association between PM2.5 exposure and FEV?
+
+```{r}
+fev_pm_summary <- chs_comb %>%
+  group_by(pm25_mass) %>%
+  summarize(mean_fev = mean(fev, na.rm = TRUE))
+fev_pm_summary
+```
+
+The association between PM2.5 exposure and FEV seems to be somewhat negative. There is a little bit of change between the two variables, but it still seems there is an association.
+
+## **Visualization**
+
+### 1. Facet plot showing scatterplots with regression lines of BMI vs FEV by "townname"
+
+```{r}
+ggplot(chs_comb, aes(x = bmi, y = fev)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  facet_wrap(~townname) +
+  labs(title = "Scatterplot of BMI vs. FEV by Townname",
+       x = "BMI",
+       y = "FEV")
+```
+
+It seems that organized by towns, BMI and FEV have an overall relatively positive relationship with each other.
+
+### 2. Stacked histograms of FEV by BMI category and FEV by smoke/gas exposure
+
+```{r}
+ggplot(chs_comb, aes(x = fev, fill = obesity_level)) +
+  geom_histogram(binwidth = 30, position = "stack") +
+  labs(title = "Stacked Histogram of FEV by BMI Category",
+       x = "FEV",
+       y = "Count") +
+ scale_fill_brewer(palette = "PiYG", name = "BMI Category",
+                    labels = c("Underweight", "Normal", "Overweight", "Obese"))
+```
+
+```{r}
+ggplot(chs_comb, aes(x = fev, fill = smoke_gas_exposure)) +
+  geom_histogram(binwidth = 30, position = "stack") +
+  labs(title = "Stacked Histogram of FEV by Smoke/Gas Exposure",
+       x = "FEV",
+       y = "Count") +
+     scale_fill_brewer(palette = "PiYG", name = "Smoke/Gas Exposure",
+                    labels = c("None", "Smoke", "Gas Stove", "Both"))
+```
+
+### 3. Barchart of BMI by smoke/gas exposure
+
+```{r}
+ggplot(chs_comb, aes(x = smoke_gas_exposure, y = bmi, fill = smoke_gas_exposure)) +
+  geom_bar(stat = "summary", fun = "mean") +
+  labs(title = "Bar Chart of BMI by Smoke/Gas Exposure",
+       x = "Smoke/Gas Exposure",
+       y = "Mean BMI") +
+   scale_fill_brewer(palette = "PiYG", name = "Smoke/Gas Exposure",
+                    labels = c("None", "Smoke", "Gas Stove", "Both"))
+```
+
+### 4. Statistical summary graphs of FEV by BMI and FEV by smoke/gas exposure category
+
+```{r}
+ggplot(chs_comb, aes(x = obesity_level, y = fev)) +
+  geom_boxplot() +
+  labs(title = "Boxplot of FEV by BMI Category",
+       x = "BMI Levels",
+       y = "FEV")
+```
+
+```{r}
+ggplot(chs_comb, aes(x = smoke_gas_exposure, y = fev)) +
+  geom_boxplot() +
+  labs(title = "Boxplot of FEV by Smoke/Gas Exposure",
+       x = "Smoke/Gas Exposure",
+       y = "FEV")
+```
+
+### 5. A leaflet map showing the concentrations of PM2.5 mass in each of the CHS communities
+
+```{r}
+leaflet(chs_comb) %>%
+  addTiles() %>%
+  addCircleMarkers(
+    ~lon,
+    ~lat,
+    radius = ~pm25_mass,
+    color = "green",
+    stroke = FALSE,
+    fillOpacity = 0.5,
+    popup = ~paste("Community: ", townname, "<br>PM2.5 Mass: ", pm25_mass, " µg/m³"),
+    label = ~townname
+  ) %>%
+  addLegend("bottomright", colors = "green", labels = "PM2.5 Mass")
+```
+
+### 6. Choose a visualization to examine whether PM2.5 mass is associated with FEV
+
+```{r}
+ggplot(chs_comb, aes(x = pm25_mass, y = fev)) +
+  geom_point() +               
+  geom_smooth(method = "lm") +
+  labs(title = "Scatterplot of PM2.5 Mass vs. FEV",
+       x = "PM2.5 Mass (µg/m³)",
+       y = "FEV")
+```
